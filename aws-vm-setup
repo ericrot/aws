@@ -1,0 +1,85 @@
+#!/bin/bash
+#  © 2016 Emerson Electric Co.
+#
+# Description: Setup the template VM for use in the deployment VM
+#              Assumes sudoers.d entry added and eth0 NIC names used
+usage() { echo "Usage: $0 [-a <vm-ip-addr>] [-t platform target]" 1>&2; exit 1; }
+[ $# -eq 0 ] || [ $# -eq 1 ] || [ $# -eq 3 ] || [ $# -gt 4 ] && usage
+
+# Valid values: vmware, esxi, hyper_v, azure, aws, virtualbox, appliance
+#        see check_platform_target below
+platform_target=aws
+ssh_port=22
+while getopts ":a:t:" arg; do
+    case "${arg}" in
+        a) # Specific the deployment vm IP address.
+            target_ip_addr=${OPTARG}
+            ;;
+        t) # What is the target platform?
+            platform_target=${OPTARG}
+            ;;
+        h | *) # Display help.
+            usage
+            ;;
+    esac
+done
+
+# Load common bash functions
+. `dirname $0`"/common-bash-functions"
+
+# Verify platform_target is valid before proceeding
+check_platform_target $platform_target
+rc=$?
+if [ $rc -ne 0 ]; then
+    echo "Invalid platform target: $platform_target"
+    echo "   valid targets: vmware, esxi, hyper_v, azure, aws, virtualbox, appliance"
+    exit 1
+else
+    echo "Valid platform target: $platform_target"
+fi
+
+VM_VARS=`dirname $0`"/script-init"
+# load common variables
+. $VM_VARS
+
+if [ $platform_target = "aws" ]; then
+    echo "Ensure the AWS instance is running; Enter to continue"
+    read yn
+else
+    echo "Unknown Edge/Appliance platform; Don't know what to do???"
+    exit 2;
+fi
+
+echo "Remote IP: $target_ip_addr"
+
+if [ $platform_target = "azure" ]; then
+    ssh_key_file=~/.ssh/azure/azure-cert.pem
+    ssh_pub_file=
+elif [ $platform_target = "aws" ]; then
+    ssh_key_file=~/.ssh/aws/emr-aws-cert
+    ssh_pub_file=
+else
+    ssh_key_file=~/.ssh/pwinsight/pwinsight-dev-key.pem
+    ssh_pub_file=~/.ssh/pwinsight/pwinsight-dev-key.pub
+fi
+
+echo ""
+echo "Creating the remote temporary directory for file transfer"
+ssh -i $ssh_key_file -p $ssh_port -oStrictHostKeyChecking=no "$VM_USER@${target_ip_addr}" '/bin/bash -s' -- < ./remote-mktmp
+
+echo ""
+echo "Copying file(s) to the remote system"
+scp -i $ssh_key_file -P $ssh_port -oStrictHostKeyChecking=no "$VM_VARS" "90-developer-user" "vm-build-prerequisites.sh" "${VM_USER}@${target_ip_addr}:~/${REMOTE_TMP_DIR}"
+
+if [ ! -z "$VM_DEFAULT_USER" ]; then
+    echo ""
+    echo "Removing the default user: $VM_DEFAULT_USER"
+    ssh -i $ssh_key_file -p $ssh_port -oStrictHostKeyChecking=no "$VM_USER@${target_ip_addr}" '/bin/bash -s' -- < ./remote-aws-vm-user-remove
+fi
+
+# just relax for a second
+/bin/sleep 1
+
+echo ""
+echo "Restarting remote system: $target_ip_addr"
+ssh -i $ssh_key_file -p $ssh_port -oStrictHostKeyChecking=no "$VM_USER@${target_ip_addr}" '/bin/bash -s' - -k <./remote-restart

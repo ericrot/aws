@@ -1,0 +1,31 @@
+#!/bin/bash
+# © 2016 Emerson Electric Co.
+#
+# Description: Initialize the Application Server
+usage() { echo "Usage: $0 [-k]" 1>&2; exit 1; }
+[ $# -gt 1 ] && usage
+
+#
+REMOTE_STAGING_DIR="/home/$USER/tmp"
+remove_files=true
+while getopts ":k" arg; do
+    case "${arg}" in
+        k) # Should we keep the files?
+            remove_files=false
+            ;;
+        h | *) # Display help.
+            usage
+            ;;
+    esac
+done
+
+echo "Restarting the Server..."
+sudo shutdown -r +1
+
+if [ "$remove_files" == "true" ]; then
+    echo ""
+    echo "  Cleaning up files"
+
+    # Remove staging files from the temp directory
+    /bin/rm -rf ${REMOTE_STAGING_DIR}
+fi

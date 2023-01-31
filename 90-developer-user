@@ -1,0 +1,3 @@
+# User rules for developer during VM Build.
+#    To be removed at the end of the VM build process!!!
+developer ALL=(ALL) NOPASSWD:ALL

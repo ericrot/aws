@@ -1,0 +1,60 @@
+#
+# Write a key value pair in the requested configuration file
+#
+write_config () {
+    # $1 is the key string
+    # $2 is the value string
+    # $3 is the configuration file name
+    /bin/sed -i "/\<$1\>/ s#=.*#=$2#" $3
+}
+
+#
+# URL encode a string (requires curl)
+#
+url_encode() {
+    # URL encode parameter passed $1
+    local encoded_val="$(curl -s -o /dev/null -w %{url_effective} --get --data-urlencode "$1" "")"
+    # strip off the "/?" added by curl for encoding
+    encoded_val=${encoded_val:2}
+    echo $encoded_val
+}
+
+#
+# Get a password from the user
+#
+get_password() {
+    local pwd=""
+    if [ -z $1 ]; then
+        read -s -p "Enter password for $username: " pwd
+    else
+        pwd="$1"
+    fi
+    echo >&2
+    echo "$pwd"
+}
+
+# update the build number in the build_ver.cfg file
+increment_build_num () {
+    # $1 is the variable name to increment
+    # $2 is build number to increment
+    # $3 is the file to update
+    local bld_num=$2
+    (( bld_num++ ))
+    write_config $1 $bld_num $3
+    echo $bld_num
+}
+
+#
+# Verify the platform_target is a valid value
+#
+check_platform_target() {
+    case "$1" in
+        vmware|esxi|hyper_v|azure|aws|virtualbox|appliance)
+        ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    return 0
+}

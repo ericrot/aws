@@ -1,0 +1,24 @@
+#!/bin/bash
+# © 2020 Emerson Electric Co.
+#
+# Description: Remove the default user on the target system
+
+REMOTE_TMP_DIR="/home/$USER/tmp"
+
+# include some common variables that are copied up
+SETUP_VARS="${REMOTE_TMP_DIR}/script-init"
+. $SETUP_VARS
+
+echo "|"
+echo "--- Remote User Config: Remove default user - $VM_DEFAULT_USER"
+#
+user_exists=$(id -u $VM_DEFAULT_USER > /dev/null 2>&1; echo $?)
+# only remove the user if it exist
+if [ $user_exists -eq 0 ]; then
+    echo "  |"
+    echo "  + Removing $VM_DEFAULT_USER user from system"
+    sudo /usr/sbin/deluser --remove-home $VM_DEFAULT_USER
+else
+    echo "  |"
+    echo "  + User $VM_DEFAULT_USER does not exist"
+fi

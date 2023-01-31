@@ -1,0 +1,16 @@
+#!/bin/bash
+# © 2016 Emerson Electric Co.
+#
+# Description: Initialize the deployment VM for the Application Server
+
+# Setup the system configuration directory and scripts
+STAGING_DIR="/home/$USER/tmp"
+
+if [ ! -d "$STAGING_DIR" ]; then
+    echo ""
+    echo "  creating directory $STAGING_DIR"
+    /bin/mkdir "$STAGING_DIR"
+else
+    echo ""
+    echo "  $STAGING_DIR already created"
+fi

@@ -1,0 +1,34 @@
+#cloud-config
+#
+# Upgrade the instance on first boot
+package_update: true
+package_upgrade: true
+package_reboot_if_required: true
+packages:
+  - p7zip-full
+  - curl
+  - apt-transport-https
+  - ca-certificates
+  - software-properties-common
+  - openjdk-11-jre-headless
+
+runcmd:
+  - curl -L https://github.com/docker/compose/releases/download/$(curl -s https://api.github.com/repos/docker/compose/releases/latest | grep "tag_name" | cut -d \" -f4)/docker-compose-$(uname -s)-$(uname -m) -o /usr/local/bin/docker-compose
+  - chmod 755 /usr/local/bin/docker-compose
+  - mkdir -p /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+  - apt-get update -y
+  - apt-get install -y docker-ce docker-ce-cli containerd.io
+  - systemctl start docker
+  - systemctl enable docker
+  - addgroup --gid 1005 developer
+  - adduser --gecos "Developer" --disabled-login --disabled-password --shell /bin/bash --uid 1005 --gid 1005 developer
+  - cp -R /home/ubuntu/.ssh/ /home/developer/
+  - chown -R developer:developer /home/developer/.ssh
+  - chmod 700 /home/developer/.ssh
+  - chmod 600 /home/developer/.ssh/authorized_keys
+  - usermod -aG docker,sudo developer
+  - echo "developer ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/90-cloud-init-users
+  - apt-get -y autoremove --purge
+  - apt-get -y clean

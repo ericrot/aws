@@ -1,0 +1,44 @@
+#!/bin/bash
+# © 2020 Emerson Electric Co.
+#
+# Description: Initialize the default user on the target system
+
+REMOTE_TMP_DIR="/home/$USER/tmp"
+
+# include some common variables that are copied up
+SETUP_VARS="${REMOTE_TMP_DIR}/script-init"
+. $SETUP_VARS
+
+echo "|"
+echo "--- Remote User Config: Setup default user"
+
+# Notes: Setup developer user on AWS VM
+#
+#  Assumes a default Ubuntu VM with default username = ubuntu
+#
+user_exists=$(id -u $VM_USER > /dev/null 2>&1; echo $?)
+# only create the user if it does not already exist
+if [ $user_exists -ne 0 ]; then
+   sudo /usr/sbin/addgroup -gid $VM_UID_GID $VM_USER
+   sudo /usr/sbin/adduser --disabled-login --gecos "Developer" --shell /bin/bash -uid $VM_UID_GID -gid $VM_UID_GID $VM_USER
+   echo $VM_USER:$VM_USER_PWD | sudo chpasswd
+   # Add new user to sudo group for use later
+   sudo usermod -aG sudo $VM_USER
+   sudo usermod -aG adm $VM_USER
+   sudo usermod -aG netdev $VM_USER
+
+   # setup the new user home directory
+   sudo mkdir /home/$VM_USER/.ssh
+   sudo chmod 700 /home/$VM_USER/.ssh
+   sudo chown $VM_USER:$VM_USER /home/$VM_USER/.ssh
+   if [ -f "~/.ssh/authorized_keys" ]; then
+      sudo cp ~/.ssh/authorized_keys /home/$VM_USER/.ssh/
+      sudo chown $VM_USER:$VM_USER /home/$VM_USER/.ssh/authorized_keys
+      sudo chmod 600 /home/$VM_USER/.ssh/authorized_keys
+   fi
+
+   if [ -f "$REMOTE_TMP_DIR/90-developer-user" ]; then
+      sudo cp $REMOTE_TMP_DIR/90-developer-user /etc/sudoers.d/
+      sudo chmod 440 /etc/sudoers.d/90-developer-user
+   fi
+fi

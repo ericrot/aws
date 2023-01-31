@@ -1,0 +1,190 @@
+#!/bin/bash
+#  © 2021 Emerson Electric Co.
+#
+# Description: setup deployment vm for aws
+#
+
+#
+# if you receive an error (RequestExpired), update Profile credentials:
+#   Login to the account via browser:
+#     AWS Emerson SSO URL - https://d-90670fb00e.awsapps.com/start#/
+#   Once logged in
+#     1) select the account to access
+#     2) select the link to "Command line or programmatic access"
+#         this will pop up a dialog box that contains the key material to
+#         enter in the .aws/credentials file (%USERPROFILE%\.aws\credentials)
+#
+
+usage() { echo "Usage: $0 [-i <instance suffix>] [-p <instance prefix>] [-a] [-d <data drive size GB>]" 1>&2; exit 1; }
+[ $# -eq 0 ] || [ $# -gt 7 ] && usage
+
+instance_suffix=n001
+instance_prefix=pwiv2
+instance_use_arm64=false
+vm_build_type=plantweb_insight
+data_disk_gb=0
+external_ip_range="144.191.128.0/17 122.248.16.0/21 73.37.160.35/32"
+use_public_ip=false
+
+while getopts ":i:p:d:a" arg; do
+    case "${arg}" in
+        i) # Specify the instance number of the deplyment VM
+            instance_suffix=${OPTARG}
+            ;;
+        p) # Specify the instance prefix for VM name
+            instance_prefix=${OPTARG}
+            ;;
+        d) # Create an extra data disk or not
+            data_disk_gb=${OPTARG}
+            ;;
+        a) # Is this an arm64 instance
+            instance_use_arm64=true
+            ;;
+        h | *) # Display help.
+            usage
+            ;;
+    esac
+done
+
+if [ "$instance_use_arm64" == "false" ]; then
+    #AWS_INSTANCE_TYPE=t3a.medium
+    #AWS_INSTANCE_TYPE=t3a.xlarge
+    AWS_INSTANCE_TYPE=t3a.small
+    AWS_ARCH=amd64
+    AWS_CPU=x86_64
+    UBUNTU_IMAGE="ubuntu-focal-20.04"
+else
+    AWS_INSTANCE_TYPE=t4g.small # ARM64 test size
+    AWS_ARCH=arm64
+    AWS_CPU=$AWS_ARCH
+    UBUNTU_IMAGE="ubuntu-jammy-22.04"
+fi
+
+EMERSON_PREFIX_LIST_ID="pl-0abe0dff37f62e801"
+MY_EMERSON_CIDR="10.234.58.0/24"
+#AWS_PROFILE=emerson
+AWS_PROFILE=151303814460_AWSPowerUserAccess
+#AWS_VM_REGION=us-west-2
+#AWS_VM_REGION=us-east-2
+AWS_VM_REGION=us-east-1
+AWS_AVAILABILITY_ZONE="${AWS_VM_REGION}b"
+AWS_VM_ADMIN_USER=developer
+AWS_KEY_NAME=emr-aws-cert
+AWS_VM_SSH_KEY=~/.ssh/aws/${AWS_KEY_NAME}
+AWS_VM_NAME=$(printf "%s-%s" $instance_prefix $instance_suffix)
+AWS_VM_OS_DISK="$AWS_VM_NAME-osdisk"
+AWS_VM_OS_DISK_TYPE=gp2 # general purpose SSD
+AWS_VM_OS_DISK_SIZE=30  # GiBs
+AWS_DEFAULT_VPC="vpc-0dc97a3c4b46a6a73"
+AWS_VPC="vpc-a-pwi-n-001"
+AWS_DEFAULT_SECURITY_GROUP=default
+AWS_SECURITY_GROUP="$AWS_VM_NAME-sg"
+AWS_DEFAULT_SUBNET="subnet-0dba6c8d8adcc66ce"
+AWS_SUBNET=$AWS_DEFAULT_SUBNET
+AWS_PUBLIC_IP="$AWS_VM_NAME-pip"
+AWS_VM_NIC="$AWS_VM_NAME-nic"
+
+# Get the image id to use for the specified region
+ami_image=$(aws ec2 describe-images --owners 099720109477 --filters Name=root-device-type,Values=ebs Name=architecture,Values=$AWS_CPU Name=name,Values="ubuntu/images/hvm-ssd/${UBUNTU_IMAGE}-$AWS_ARCH-server-*" --query 'sort_by(Images, &CreationDate)[-1].[ImageId]' --output text --region $AWS_VM_REGION --profile $AWS_PROFILE)
+if [ ! -z "$ami_image" ]; then
+    echo ""
+    echo "AMI Image: $ami_image"
+else
+    echo "AMI not found"
+    exit 1
+fi
+
+# Get the default VPC for use by the VM
+aws_vpc=$(aws ec2 describe-vpcs --filters Name=vpc-id,Values=* --query 'sort_by(Vpcs, &VpcId)[-1].[VpcId]' --output text --region $AWS_VM_REGION --profile $AWS_PROFILE)
+if [ ! -z $aws_vpc ]; then
+    echo ""
+    echo "AWS VPC: $aws_vpc"
+else
+    echo "Could not find VPC"
+    exit 2
+fi
+
+# Get the subnet for use by VM
+aws_subnet=$(aws ec2 describe-subnets --filters Name=availability-zone,Values="$AWS_AVAILABILITY_ZONE" Name=vpc-id,Values="$aws_vpc" --query 'sort_by(Subnets, &SubnetId)[-1].[SubnetId]' --output text --region $AWS_VM_REGION --profile $AWS_PROFILE)
+if [ ! -z $aws_subnet ]; then
+    echo ""
+    echo "AWS Subnet: $aws_subnet"
+else
+    echo "Could not find subnet"
+    exit 3
+fi
+echo ""
+echo "Initialized virtual network and subnet: $aws_vpc, $aws_subnet"
+
+# Create security group
+aws_security_group_id=$(aws ec2 describe-security-groups --filters Name=group-name,Values=$AWS_SECURITY_GROUP --query 'sort_by(SecurityGroups, &GroupId)[-1].[GroupId]' --region $AWS_VM_REGION --profile $AWS_PROFILE --output text)
+if [ "$aws_security_group_id" == "None" ]; then
+    aws_security_group=$(aws ec2 create-security-group --group-name $AWS_SECURITY_GROUP --description "Security group for $AWS_VM_NAME" --vpc-id $aws_vpc --region $AWS_VM_REGION --profile $AWS_PROFILE --output text)
+    if [ ! -z "$aws_security_group" ]; then
+        echo ""
+        echo "AWS Security Group: $aws_security_group"
+        # Tag the security group with a name
+        echo "   Tagging security group..."
+        aws ec2 create-tags --resources $aws_security_group --tags Key=Name,Value="sg-$AWS_VM_NAME" --region $AWS_VM_REGION --profile $AWS_PROFILE
+        aws_security_group_id=$(aws ec2 describe-security-groups --filters Name=group-name,Values=$AWS_SECURITY_GROUP --query 'sort_by(SecurityGroups, &GroupId)[-1].[GroupId]' --region $AWS_VM_REGION --profile $AWS_PROFILE --output text)
+
+        # Create security group ingress rules
+        aws ec2 authorize-security-group-ingress --group-id $aws_security_group --ip-permissions IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges="[{CidrIp=$MY_EMERSON_CIDR,Description='My IP Address Subnet'}]" --region $AWS_VM_REGION --profile $AWS_PROFILE --output text
+        if [ $? -ne 0 ]; then
+            echo "Could not configure $aws_security_group ingress rule"
+            exit 5
+        fi
+        aws ec2 authorize-security-group-ingress --group-id $aws_security_group --ip-permissions IpProtocol=tcp,FromPort=22,ToPort=22,PrefixListIds="[{PrefixListId=$EMERSON_PREFIX_LIST_ID,Description='EMR IP Prefix List'}]" --region $AWS_VM_REGION --profile $AWS_PROFILE --output text
+        if [ $? -ne 0 ]; then
+            echo "Could not configure $aws_security_group ingress rule"
+            exit 5
+        fi
+
+    else
+        echo "Could not create AWS security group $AWS_SECURITY_GROUP"
+        exit 4
+    fi
+else
+    echo ""
+    echo "Security group $AWS_SECURITY_GROUP already exists"
+fi
+
+# Create the network interface
+is_aws_nic=$(aws ec2 describe-network-interfaces -filters "Name=tag-value,Values=$AWS_VM_NIC" --query 'NetworkInterfaces[0].TagSet[0].Value' --region $AWS_VM_REGION --profile $AWS_PROFILE --output text)
+if [ "$is_aws_nic" != "nic-$AWS_VM_NAME" ]; then
+    aws_nic=$(aws ec2 create-network-interface --subnet-id $aws_subnet --groups $aws_security_group --description "NIC for $AWS_VM_NAME" --region $AWS_VM_REGION --profile $AWS_PROFILE --output text)
+    if [ "${aws_nic}" != "" ]; then
+        aws_nic_id=$(aws ec2 describe-network-interfaces --filters Name=group-id,Values=$aws_security_group_id --query 'sort_by(NetworkInterfaces, &NetworkInterfaceId)[-1].[NetworkInterfaceId]' --region $AWS_VM_REGION --profile $AWS_PROFILE --output text)
+        echo ""
+        echo "AWS NIC: $aws_nic_id"
+        echo "   Tagging NIC..."
+        aws ec2 create-tags --resources $aws_nic_id --tags Key=Name,Value="$AWS_VM_NIC" --region $AWS_VM_REGION --profile $AWS_PROFILE
+    else
+        echo "AWS NIC create failed: $AWS_VM_NIC"
+        exit 6
+    fi
+else
+    aws_nic_id=$(aws ec2 describe-network-interfaces --filters Name=group-id,Values=$aws_security_group_id --query 'sort_by(NetworkInterfaces, &NetworkInterfaceId)[-1].[NetworkInterfaceId]' --region $AWS_VM_REGION --profile $AWS_PROFILE --output text)
+    echo ""
+    echo "AWS NIC $aws_nic_id, $AWS_VM_NIC already exists"
+fi
+
+
+# Other aws ec2 commands to consider:
+#         > aws ec2 attach-volume
+#         > aws ec2 create-volume
+#         > aws ec2 delete-volume
+#         > aws ec2 create-image
+#         > aws ec2 deregister-image
+#         > aws ec2 register-image
+#         > aws ec2 start-instances, stop-instances, terminate-instances
+echo ""
+echo "Create the VM: $AWS_VM_NAME"
+NET_INTERFACES_JSON=$(printf '[{"DeviceIndex":0,"NetworkInterfaceId":"%s"}]' $aws_nic_id)
+aws ec2 run-instances --image-id $ami_image --count 1 --block-device-mappings file://drive-mapping.json --instance-type $AWS_INSTANCE_TYPE --key-name $AWS_KEY_NAME --network-interfaces $NET_INTERFACES_JSON --user-data file://cloud-init.txt --tag-specifications ResourceType=instance,Tags="[{Key=Name,Value=$AWS_VM_NAME}]" --region $AWS_VM_REGION --profile $AWS_PROFILE --no-cli-pager
+if [ $? -ne 0 ]; then
+    echo "Create VM $AWS_VM_NAME failed"
+    exit 6
+fi
+
+# clean up

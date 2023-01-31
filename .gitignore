@@ -1,0 +1,53 @@
+# Compiled Sources
+##################
+*.o
+*.out
+*.a
+*.la
+*.d
+*.elf
+*.bin
+*.map
+*.hex
+*.exe
+.obj/*
+*.class
+*.so
+*.lib
+
+# Misc file types
+#################
+*.save
+*.save*
+*.pcapng
+*.pcap
+*.lck
+*.flag
+*.swp
+**/save/
+**/tmp/
+*.csv
+*.pid
+
+# emacs backup files
+####################
+*~
+\#*\#
+.\#*
+
+# Packages and archives
+#######################
+*.gz
+*.tgz
+*.tar
+*.zip
+*.7z
+*.jar
+*.war
+*.ear
+
+# Logs files
+####################
+**/logs/*.log.*
+*.log
+*.log.*

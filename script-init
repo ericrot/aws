@@ -1,0 +1,7 @@
+# used by edge-setup scripts for common variables
+#
+REMOTE_TMP_DIR=tmp
+VM_DEFAULT_USER=ubuntu
+VM_UID_GID=1005
+VM_USER=developer
+VM_USER_PWD="build(it)"
